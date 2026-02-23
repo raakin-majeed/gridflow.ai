@@ -109,6 +109,36 @@ def get_weather_impact():
         }
     }
 
+# --- Sustainability Metrics (India Grid Specific) ---
+# Average CO2 emissions in India: ~0.82 kg CO2 per kWh (approx. 820 kg per MWh)
+EMISSION_FACTOR_CO2_PER_MWH = 820 
+
+@app.get("/api/v1/sustainability")
+def get_sustainability_impact():
+    """Calculates the environmental cost of the forecasted demand"""
+    base_analysis = get_advanced_analysis()
+    forecasted_mw = base_analysis['forecast']['standard_mw']
+    
+    # 1. Calculate CO2 (Assuming 1 hour of this load)
+    # 1 MW for 1 hour = 1 MWh
+    total_co2_kg = forecasted_mw * EMISSION_FACTOR_CO2_PER_MWH
+    
+    # 2. Real-world equivalents (to make data understandable)
+    # 1 mature tree absorbs ~21kg of CO2 per year
+    trees_needed = total_co2_kg / 21
+    
+    return {
+        "carbon_footprint": {
+            "hourly_co2_emissions_kg": round(total_co2_kg, 2),
+            "equivalent_trees_to_offset": round(trees_needed, 0)
+        },
+        "energy_mix_estimate": {
+            "thermal_coal": "70%",
+            "renewables": "22%",
+            "other": "8%"
+        },
+        "recommendation": "High Emissions. Suggest triggering Demand Response protocols." if total_co2_kg > 350000 else "Stable Emissions."
+    }
 
 if __name__ == "__main__":
     import uvicorn
