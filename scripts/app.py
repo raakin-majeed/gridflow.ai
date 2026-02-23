@@ -4,6 +4,7 @@ import joblib
 import os
 import numpy as np
 import random
+import datetime
 
 app = FastAPI()
 
@@ -139,6 +140,41 @@ def get_sustainability_impact():
         },
         "recommendation": "High Emissions. Suggest triggering Demand Response protocols." if total_co2_kg > 350000 else "Stable Emissions."
     }
+
+
+
+@app.get("/api/v1/system-status")
+def get_system_status():
+    """Consolidates all metrics into a single 'Action Center'"""
+    # 1. Gather data from existing logic
+    weather_data = get_weather_impact()
+    sustainability = get_sustainability_impact()
+    
+    # 2. Define Thresholds
+    MAX_BUDGET = 30000000  # 3 Crore INR
+    MAX_TEMP = 35.0        # Heatwave limit
+    
+    alerts = []
+    
+    # 3. Logic: Check for 'Critical' conditions
+    if weather_data['metadata']['ambient_temp_c'] > MAX_TEMP:
+        alerts.append({"severity": "CRITICAL", "type": "THERMAL_OVERLOAD", "message": "High ambient temperature detected. Grid cooling systems required."})
+        
+    cost = 25856765.0 # This would normally pull from your financial logic
+    if cost > MAX_BUDGET:
+        alerts.append({"severity": "WARNING", "type": "BUDGET_EXCEEDED", "message": "Procurement cost exceeds daily allocation."})
+
+    # 4. Final System Health Assessment
+    system_score = 100 - (len(alerts) * 20)
+    
+    return {
+        "overall_health_score": f"{system_score}/100",
+        "active_alerts": alerts if alerts else "No active issues",
+        "timestamp": datetime.datetime.now().isoformat(),
+        "summary": "System operating within safe parameters" if not alerts else "Immediate attention required"
+    }
+
+
 
 if __name__ == "__main__":
     import uvicorn
