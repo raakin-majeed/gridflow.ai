@@ -3,6 +3,7 @@ import pandas as pd
 import joblib
 import os
 import numpy as np
+import random
 
 app = FastAPI()
 
@@ -70,6 +71,47 @@ def get_advanced_analysis():
         }
     }
 
+
+# --- New Feature: Weather Intelligence ---
+def get_mock_weather():
+    # Simulate a realistic Maharashtra afternoon temperature
+    temp = random.uniform(28.0, 38.0) 
+    condition = "Heatwave" if temp > 34 else "Normal"
+    return {"temp_celsius": round(temp, 1), "condition": condition}
+
+@app.get("/api/v1/weather-impact")
+def get_weather_impact():
+    """Simulates how temperature spikes in Maharashtra affect the grid"""
+    # 1. Simulate a random temperature for Maharashtra
+    temp = random.uniform(28.0, 40.0) 
+    
+    # 2. Get the base prediction from our AI
+    base_analysis = get_advanced_analysis()
+    base_mw = base_analysis['forecast']['standard_mw']
+    
+    # 3. Apply Thermal Load Logic: +3% demand for every degree above 30°C
+    impact_multiplier = 1.0
+    if temp > 30:
+        impact_multiplier = 1 + ((temp - 30) * 0.03)
+    
+    adjusted_mw = base_mw * impact_multiplier
+    
+    return {
+        "metadata": {
+            "location": "Maharashtra",
+            "ambient_temp_c": round(temp, 1),
+            "status": "Heatwave Warning" if temp > 35 else "Normal"
+        },
+        "analysis": {
+            "base_demand_mw": round(base_mw, 2),
+            "weather_adjusted_demand_mw": round(adjusted_mw, 2),
+            "thermal_load_increase_percent": f"{round((impact_multiplier - 1) * 100, 1)}%"
+        }
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)
+
+
