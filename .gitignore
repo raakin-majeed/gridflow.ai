@@ -1,0 +1,8 @@
+# Ignore python cache
+__pycache__/
+*.pyc
+
+# Ignore raw data downloads and trained models
+data/*.csv
+models/*.pkl
+.ipynb_checkpoints/
