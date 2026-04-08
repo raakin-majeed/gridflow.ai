@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     Boolean,
@@ -48,6 +49,13 @@ def init_db() -> None:
 
 
 app = FastAPI(title="Strategic Arbitrage Engine")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 init_db()
 
 
@@ -90,6 +98,13 @@ class GridBrain:
             return "SELL", "Discharge/export now; monetise high tariffs or protect grid."
         return "STORE", "Hold position; preserve flexibility for next interval."
 
+    def _ai_command(self, signal: str, health: float) -> str:
+        if health < 60:
+            return "EMERGENCY: Load Shedding"
+        if signal in {"BUY", "STORE"}:
+            return "ARBITRAGE: Buy & Store"
+        return "PROFIT: Sell to Grid"
+
     def compute(
         self,
         region: str,
@@ -128,6 +143,7 @@ class GridBrain:
             demand=demand,
             storage_soc=storage_soc,
         )
+        ai_command = self._ai_command(signal=signal, health=health)
 
         energy_mwh = net_load / 1000.0
         revenue = energy_mwh * price_val
@@ -140,6 +156,23 @@ class GridBrain:
         carbon_credit_savings = round(carbon_avoided_tco2 * carbon_credit_price, 2)
 
         risk = "CRITICAL" if health < 60 else "WARNING" if health < 85 else "STABLE"
+        recommended_actions = {
+            "CRITICAL": [
+                "Initiate load shedding in non-critical zones",
+                "Dispatch battery reserves immediately",
+                "Trigger emergency operator alert",
+            ],
+            "WARNING": [
+                "Shift flexible demand to off-peak windows",
+                "Prepare storage for controlled discharge",
+                "Tighten frequency and congestion monitoring",
+            ],
+            "STABLE": [
+                "Continue normal dispatch",
+                "Store surplus solar when available",
+                "Maintain reserve readiness",
+            ],
+        }
 
         with Session(engine) as session:
             session.add(
@@ -161,26 +194,17 @@ class GridBrain:
 
         return {
             "metrics": {
-                "demand_mw": round(demand, 2),
-                "solar_mw": round(solar, 2),
-                "net_load_mw": round(net_load, 2),
-                "health_score": health,
-                "storage_soc_percent": storage_soc,
+                "demand": round(demand, 2),
+                "solar": round(solar, 2),
+                "health": health,
             },
             "economics": {
-                "spot_price_inr_per_mwh": price_val,
-                "revenue_inr": round(revenue, 2),
-                "operating_cost_inr": round(operating_cost, 2),
-                "nopat_inr": round(nopat, 2),
-                "capital_charge_inr": round(capital_charge, 2),
-                "eva_inr": eva,
-                "carbon_avoided_tco2": carbon_avoided_tco2,
-                "carbon_credit_savings_inr": carbon_credit_savings,
+                "price": price_val,
+                "carbon_saved": carbon_credit_savings,
             },
             "decision": {
-                "signal": signal,
-                "risk": risk,
-                "rationale": rationale,
+                "risk_level": risk,
+                "recommended_actions": recommended_actions[risk],
             },
         }
 
@@ -199,6 +223,11 @@ class SimInput(BaseModel):
     capital_employed: float = Field(default=25000, ge=0)
     wacc: float = Field(default=0.10, ge=0, le=1)
     carbon_credit_price: float = Field(default=1500, ge=0)
+
+
+@app.get("/")
+def health_check() -> dict:
+    return {"status": "online"}
 
 
 @app.post("/api/v1/analyze")
@@ -237,4 +266,4 @@ def get_history(limit: int = 200) -> list[dict]:
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
