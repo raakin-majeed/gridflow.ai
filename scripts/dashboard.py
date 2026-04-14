@@ -138,7 +138,7 @@ if run:
         response.raise_for_status()
         st.session_state["last_res"] = response.json()
     except requests.RequestException:
-        st.error("Backend unavailable. Start FastAPI with `python scripts/app.py`.")
+        st.error("Backend unavailable. Start FastAPI with `uvicorn main:app` from the `backend/` folder.")
 
 last_res = st.session_state["last_res"]
 

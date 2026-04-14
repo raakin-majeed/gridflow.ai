@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 # Vercel/Postgres-ready database URL. Falls back to local SQLite for dev.
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./smartgrid.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///../data/gridflow.db")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 
 
