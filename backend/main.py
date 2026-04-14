@@ -2,9 +2,12 @@ import math
 import os
 import random
 from datetime import datetime, timezone
+from pathlib import Path
 
+import pandas as pd
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import (
     Boolean,
@@ -48,6 +51,20 @@ def init_db() -> None:
 
 
 app = FastAPI(title="Strategic Arbitrage Engine")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+@app.options("/api/v1/analyze")
+async def options_analyze():
+    return {}
+
+
 init_db()
 
 
@@ -186,6 +203,27 @@ class GridBrain:
 
 
 brain = GridBrain()
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR.parent / "data"
+FORECAST_DIR = DATA_DIR / "forecasts"
+
+SERIES_FILE_MAP = {
+    "total_demand": "total_demand",
+    "Maharashtra": "Maharashtra",
+    "Gujarat": "Gujarat",
+    "Tamil_Nadu": "Tamil Nadu",
+    "Delhi": "Delhi",
+    "UP": "UP",
+}
+
+SERIES_METRICS = {
+    "total_demand": {"mae": 303.8812, "rmse": 372.0095},
+    "Maharashtra": {"mae": 44.8967, "rmse": 51.6118},
+    "Gujarat": {"mae": 29.9953, "rmse": 36.1797},
+    "Tamil_Nadu": {"mae": 49.8362, "rmse": 57.1924},
+    "Delhi": {"mae": 34.4784, "rmse": 39.6050},
+    "UP": {"mae": 76.3234, "rmse": 86.7671},
+}
 
 
 class SimInput(BaseModel):
@@ -234,6 +272,121 @@ def get_history(limit: int = 200) -> list[dict]:
             {"limit": safe_limit},
         ).mappings()
         return [dict(r) for r in rows]
+
+
+@app.get("/api/v1/forecast/summary")
+def forecast_summary() -> list[dict]:
+    summary: list[dict] = []
+
+    for api_series_name, file_series_name in SERIES_FILE_MAP.items():
+        actuals_path = FORECAST_DIR / f"{file_series_name}_actuals.csv"
+        forecast_path = FORECAST_DIR / f"{file_series_name}_forecast.csv"
+
+        if not actuals_path.exists() or not forecast_path.exists():
+            continue
+
+        actuals_df = pd.read_csv(actuals_path)
+        forecast_df = pd.read_csv(forecast_path)
+
+        if actuals_df.empty or forecast_df.empty:
+            continue
+
+        actuals_df["ds"] = pd.to_datetime(actuals_df["ds"], errors="coerce")
+        forecast_df["ds"] = pd.to_datetime(forecast_df["ds"], errors="coerce")
+        actuals_df = actuals_df.dropna(subset=["ds", "y"])
+        forecast_df = forecast_df.dropna(subset=["ds", "yhat"])
+
+        if actuals_df.empty or forecast_df.empty:
+            continue
+
+        latest_actual_row = actuals_df.iloc[-1]
+        max_actual_date = latest_actual_row["ds"]
+        next_day_rows = forecast_df[forecast_df["ds"] > max_actual_date].sort_values("ds")
+        if next_day_rows.empty:
+            continue
+
+        next_day_forecast_row = next_day_rows.iloc[0]
+        metrics = SERIES_METRICS[api_series_name]
+
+        summary.append(
+            {
+                "series": api_series_name,
+                "mae": metrics["mae"],
+                "rmse": metrics["rmse"],
+                "latest_actual": float(latest_actual_row["y"]),
+                "next_day_forecast": float(next_day_forecast_row["yhat"]),
+            }
+        )
+
+    return summary
+
+
+@app.get("/api/v1/forecast/{series}")
+def forecast_series(series: str) -> dict:
+    if series not in SERIES_FILE_MAP:
+        raise HTTPException(status_code=404, detail="Unsupported forecast series.")
+
+    file_series_name = SERIES_FILE_MAP[series]
+    actuals_path = FORECAST_DIR / f"{file_series_name}_actuals.csv"
+    forecast_path = FORECAST_DIR / f"{file_series_name}_forecast.csv"
+
+    if not actuals_path.exists() or not forecast_path.exists():
+        raise HTTPException(status_code=404, detail="Forecast files not found.")
+
+    actuals_df = pd.read_csv(actuals_path)
+    forecast_df = pd.read_csv(forecast_path)
+
+    actuals_df["ds"] = pd.to_datetime(actuals_df["ds"], errors="coerce")
+    forecast_df["ds"] = pd.to_datetime(forecast_df["ds"], errors="coerce")
+    actuals_df = actuals_df.dropna(subset=["ds", "y"]).sort_values("ds")
+    forecast_df = forecast_df.dropna(subset=["ds", "yhat", "yhat_lower", "yhat_upper"]).sort_values(
+        "ds"
+    )
+
+    if actuals_df.empty or forecast_df.empty:
+        raise HTTPException(status_code=404, detail="Forecast data is empty.")
+
+    max_actual_date = actuals_df["ds"].max()
+    future_forecast = forecast_df[forecast_df["ds"] > max_actual_date].head(30).copy()
+    recent_actuals = actuals_df.tail(60).copy()
+
+    future_forecast["ds"] = future_forecast["ds"].dt.strftime("%Y-%m-%d")
+    recent_actuals["ds"] = recent_actuals["ds"].dt.strftime("%Y-%m-%d")
+
+    return {
+        "series": series,
+        "forecast": future_forecast.to_dict(orient="records"),
+        "actuals": recent_actuals.to_dict(orient="records"),
+        "metrics": SERIES_METRICS[series],
+    }
+
+
+@app.get("/api/v1/states")
+def states() -> list[dict]:
+    states_path = DATA_DIR / "long_data_.csv"
+    if not states_path.exists():
+        raise HTTPException(status_code=404, detail="State data file not found.")
+
+    df = pd.read_csv(states_path)
+    required_columns = {"States", "Regions", "latitude", "longitude"}
+    if not required_columns.issubset(df.columns):
+        raise HTTPException(status_code=500, detail="State data columns are missing.")
+
+    unique_states = (
+        df[["States", "Regions", "latitude", "longitude"]]
+        .dropna(subset=["States", "Regions", "latitude", "longitude"])
+        .drop_duplicates(subset=["States"])
+    )
+
+    return [
+        {
+            "state": row["States"],
+            "region": row["Regions"],
+            "lat": float(row["latitude"]),
+            "lon": float(row["longitude"]),
+        }
+        for _, row in unique_states.iterrows()
+    ]
 
 
 if __name__ == "__main__":
