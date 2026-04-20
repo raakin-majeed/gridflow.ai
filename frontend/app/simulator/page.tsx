@@ -26,8 +26,9 @@ const decisionClass = (decision: string): string => {
 };
 
 const STATES = ["Maharashtra", "Gujarat", "Tamil_Nadu", "Delhi", "UP"];
-const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
-console.log("API URL:", API);
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
+console.log("API URL:", API_BASE);
 
 export default function SimulatorPage() {
   const [states] = useState<string[]>(STATES);
@@ -48,12 +49,8 @@ export default function SimulatorPage() {
     setLoading(true);
     setError(null);
     try {
-      if (!API) {
-        console.error("API failed", "NEXT_PUBLIC_API_URL is undefined");
-        throw new Error("NEXT_PUBLIC_API_URL is undefined");
-      }
       console.log("RUN ANALYSIS REQUEST:", { region, temp, solar, storage, hour, festival });
-      const base = API.endsWith("/") ? API.slice(0, -1) : API;
+      const base = API_BASE.endsWith("/") ? API_BASE.slice(0, -1) : API_BASE;
       const analyzeUrl = `${base}/api/v1/analyze`;
       console.log("Calling:", analyzeUrl);
       const res = await fetch(analyzeUrl, {

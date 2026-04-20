@@ -1,9 +1,10 @@
-const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
-console.log("API URL:", API);
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
+console.log("API URL:", API_BASE);
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   try {
-    const base = API.endsWith("/") ? API.slice(0, -1) : API;
+    const base = API_BASE.endsWith("/") ? API_BASE.slice(0, -1) : API_BASE;
     const normalizedPath = path.startsWith("/") ? path : `/${path}`;
     const url = `${base}${normalizedPath}`;
     console.log("Calling:", url);

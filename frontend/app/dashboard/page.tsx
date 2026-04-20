@@ -3,17 +3,14 @@
 import { useEffect } from "react";
 import Link from "next/link";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
-console.log("API URL:", API);
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
+console.log("API URL:", API_BASE);
 
 export default function DashboardRoutePage() {
   useEffect(() => {
     console.log("CLIENT RUNNING");
-    if (!API) {
-      console.error("API failed", "NEXT_PUBLIC_API_URL is undefined");
-      return;
-    }
-    const url = `${API}/api/v1/forecast/summary`;
+    const url = `${API_BASE}/api/v1/forecast/summary`;
     console.log("Calling:", url);
     fetch(url)
       .then((res) => {

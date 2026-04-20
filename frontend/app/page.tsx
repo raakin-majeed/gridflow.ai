@@ -19,8 +19,9 @@ import {
   type NormalizedAnomalyItem,
 } from "./utils/normalize";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
-console.log("API URL:", API);
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
+console.log("API URL:", API_BASE);
 
 type DashboardChartPoint = {
   ds: string;
@@ -83,11 +84,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     console.log("CLIENT RUNNING");
-    if (!API) {
-      console.error("API failed", "NEXT_PUBLIC_API_URL is undefined");
-      return;
-    }
-    const summaryUrl = `${API}/api/v1/forecast/summary`;
+    const summaryUrl = `${API_BASE}/api/v1/forecast/summary`;
     console.log("Calling:", summaryUrl);
     fetch(summaryUrl)
       .then((res) => {
@@ -105,11 +102,7 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
-      if (!API) {
-        console.error("API failed", "NEXT_PUBLIC_API_URL is undefined");
-        throw new Error("NEXT_PUBLIC_API_URL is undefined");
-      }
-      const base = API.endsWith("/") ? API.slice(0, -1) : API;
+      const base = API_BASE.endsWith("/") ? API_BASE.slice(0, -1) : API_BASE;
       const summaryUrl = `${base}/api/v1/forecast/summary`;
       const anomaliesUrl = `${base}/api/v1/anomalies`;
       console.log("Calling:", summaryUrl);
