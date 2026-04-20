@@ -15,7 +15,8 @@ import {
 import { formatDate, formatNumber } from "../utils/format";
 import { normalizeForecastSummary } from "../utils/normalize";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
+const API = process.env.NEXT_PUBLIC_API_URL;
+console.log("API URL:", API);
 
 type ForecastRow = {
   ds: string;
@@ -48,9 +49,18 @@ export default function ForecastPage() {
     setLoading(true);
     setError(null);
     try {
+      if (!API) {
+        console.error("API failed", "NEXT_PUBLIC_API_URL is undefined");
+        throw new Error("NEXT_PUBLIC_API_URL is undefined");
+      }
       const base = API.endsWith("/") ? API.slice(0, -1) : API;
-      const res = await fetch(`${base}/api/v1/forecast/summary`);
-      if (!res.ok) throw new Error("API error");
+      const url = `${base}/api/v1/forecast/summary`;
+      console.log("Calling:", url);
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error("API failed", res.status);
+        throw new Error("API error");
+      }
       const payload = await res.json();
       const summary = normalizeForecastSummary(payload);
       console.log("DATA:", summary);

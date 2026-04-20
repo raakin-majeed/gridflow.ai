@@ -19,7 +19,8 @@ import {
   type NormalizedAnomalyItem,
 } from "./utils/normalize";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
+const API = process.env.NEXT_PUBLIC_API_URL;
+console.log("API URL:", API);
 
 type DashboardChartPoint = {
   ds: string;
@@ -81,10 +82,21 @@ export default function DashboardPage() {
   const [chartData, setChartData] = useState<DashboardChartPoint[]>([]);
 
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
     console.log("CLIENT RUNNING");
-    fetch(`${base}/api/v1/forecast/summary`)
-      .then((res) => res.json())
+    if (!API) {
+      console.error("API failed", "NEXT_PUBLIC_API_URL is undefined");
+      return;
+    }
+    const summaryUrl = `${API}/api/v1/forecast/summary`;
+    console.log("Calling:", summaryUrl);
+    fetch(summaryUrl)
+      .then((res) => {
+        if (!res.ok) {
+          console.error("API failed", res.status);
+          throw new Error("API error");
+        }
+        return res.json();
+      })
       .then((data) => console.log("DATA:", data))
       .catch((err) => console.error(err));
   }, []);
@@ -93,10 +105,18 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
+      if (!API) {
+        console.error("API failed", "NEXT_PUBLIC_API_URL is undefined");
+        throw new Error("NEXT_PUBLIC_API_URL is undefined");
+      }
       const base = API.endsWith("/") ? API.slice(0, -1) : API;
+      const summaryUrl = `${base}/api/v1/forecast/summary`;
+      const anomaliesUrl = `${base}/api/v1/anomalies`;
+      console.log("Calling:", summaryUrl);
+      console.log("Calling:", anomaliesUrl);
       const results = await Promise.allSettled([
-        fetch(`${base}/api/v1/forecast/summary`),
-        fetch(`${base}/api/v1/anomalies`),
+        fetch(summaryUrl),
+        fetch(anomaliesUrl),
       ]);
 
       const anyFailed = results.some((result) => result.status === "rejected");
@@ -107,7 +127,10 @@ export default function DashboardPage() {
       const [summaryRes, anomalyRes] = results;
 
       if (summaryRes.status === "fulfilled") {
-        if (!summaryRes.value.ok) throw new Error("API error");
+        if (!summaryRes.value.ok) {
+          console.error("API failed", summaryRes.value.status);
+          throw new Error("API error");
+        }
         const summaryJson = await summaryRes.value.json();
         const normalizedSummary = normalizeForecastSummary(summaryJson);
         console.log("DATA:", normalizedSummary);
@@ -123,8 +146,10 @@ export default function DashboardPage() {
         );
 
         const analyzeResults = await Promise.allSettled(
-          STATES.map((state) =>
-            fetch(`${base}/api/v1/analyze`, {
+          STATES.map((state) => {
+            const analyzeUrl = `${base}/api/v1/analyze`;
+            console.log("Calling:", analyzeUrl);
+            return fetch(analyzeUrl, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -135,14 +160,17 @@ export default function DashboardPage() {
                 is_festival: false,
                 sim_hour: 14,
               }),
-            }),
-          ),
+            });
+          }),
         );
 
         const riskRows: RiskItem[] = await Promise.all(
           analyzeResults.map(async (result, index) => {
             const state = STATES[index];
             if (result.status !== "fulfilled" || !result.value.ok) {
+              if (result.status === "fulfilled") {
+                console.error("API failed", result.value.status);
+              }
               return { state, score: 55, level: "AMBER", decision: "HOLD" };
             }
             const payload = await result.value.json();
@@ -204,7 +232,10 @@ export default function DashboardPage() {
         setRegionSummary(regionRows);
       }
       if (anomalyRes.status === "fulfilled") {
-        if (!anomalyRes.value.ok) throw new Error("API error");
+        if (!anomalyRes.value.ok) {
+          console.error("API failed", anomalyRes.value.status);
+          throw new Error("API error");
+        }
         const anomalyJson = await anomalyRes.value.json();
         console.log("ANOMALIES:", anomalyJson);
         setAnomalies(normalizeAnomalies(anomalyJson).slice(0, 5));
