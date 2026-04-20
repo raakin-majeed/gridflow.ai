@@ -24,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 load_dotenv()
-
+app = FastAPI()
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 
@@ -83,6 +83,15 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.get("/")
+def root():
+    return {
+        "status": "GridFlow AI Backend Running",
+        "docs": "/docs",
+        "message": "Use /docs to explore APIs"
+    }
 
 
 @app.options("/api/v1/analyze")

@@ -26,8 +26,10 @@ const decisionClass = (decision: string): string => {
   return "text-[#ffaa00]";
 };
 
+const STATES = ["Maharashtra", "Gujarat", "Tamil_Nadu", "Delhi", "UP"];
+
 export default function SimulatorPage() {
-  const [states, setStates] = useState<string[]>([]);
+  const [states] = useState<string[]>(STATES);
   const [region, setRegion] = useState("");
   const [temp, setTemp] = useState(30);
   const [solar, setSolar] = useState(2000);
@@ -67,23 +69,8 @@ export default function SimulatorPage() {
   }, [festival, hour, region, solar, storage, temp]);
 
   useEffect(() => {
-    const loadStates = async () => {
-      setPageLoading(true);
-      setError(null);
-      try {
-        const payload = await apiFetch<unknown>("/api/v1/states");
-        const stateList = Array.isArray(payload)
-          ? payload.filter((item): item is string => typeof item === "string")
-          : [];
-        setStates(stateList);
-        setRegion(stateList[0] ?? "");
-      } catch {
-        setError("CONNECTION ERROR — is the backend running?");
-      } finally {
-        setPageLoading(false);
-      }
-    };
-    void loadStates();
+    setRegion(STATES[0]);
+    setPageLoading(false);
   }, []);
 
   useEffect(() => {

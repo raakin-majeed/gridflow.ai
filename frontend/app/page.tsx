@@ -15,21 +15,39 @@ import { apiFetch } from "./utils/api";
 import { formatDateTime, formatNumber } from "./utils/format";
 import {
   normalizeAnomalies,
-  normalizeForecastSeries,
   normalizeForecastSummary,
-  normalizeHistory,
-  normalizeRegionSummary,
-  normalizeRisk,
+  normalizeResponse,
   type NormalizedAnomalyItem,
-  type NormalizedHistoryItem,
-  type RegionSummaryItem,
-  type RiskItem,
 } from "./utils/normalize";
 
 type DashboardChartPoint = {
   ds: string;
   actual?: number;
   forecast?: number;
+};
+
+type RiskItem = {
+  state: string;
+  score: number;
+  level: "RED" | "AMBER" | "GREEN";
+  decision: string;
+};
+
+type RegionSummaryItem = {
+  region: "North" | "West" | "South";
+  states: string[];
+  demandTotal: number;
+  demandChangePct: number;
+  riskScore: number;
+  riskLevel: "RED" | "AMBER" | "GREEN";
+};
+
+const STATES = ["Maharashtra", "Gujarat", "Tamil_Nadu", "Delhi", "UP"] as const;
+
+const REGION_GROUPS: Record<RegionSummaryItem["region"], string[]> = {
+  North: ["Delhi", "UP"],
+  West: ["Maharashtra", "Gujarat"],
+  South: ["Tamil_Nadu"],
 };
 
 const levelColor = (level: string): string => {
@@ -58,7 +76,6 @@ export default function DashboardPage() {
   >([]);
   const [risk, setRisk] = useState<RiskItem[]>([]);
   const [anomalies, setAnomalies] = useState<NormalizedAnomalyItem[]>([]);
-  const [history, setHistory] = useState<NormalizedHistoryItem[]>([]);
   const [regionSummary, setRegionSummary] = useState<RegionSummaryItem[]>([]);
   const [chartData, setChartData] = useState<DashboardChartPoint[]>([]);
 
@@ -68,11 +85,7 @@ export default function DashboardPage() {
       setError(null);
       const results = await Promise.allSettled([
         apiFetch<unknown>("/api/v1/forecast/summary"),
-        apiFetch<unknown>("/api/v1/risk-score/all"),
         apiFetch<unknown>("/api/v1/anomalies?limit=20"),
-        apiFetch<unknown>("/api/v1/history?limit=20"),
-        apiFetch<unknown>("/api/v1/forecast/Maharashtra"),
-        apiFetch<unknown>("/api/v1/regions/summary"),
       ]);
 
       const anyFailed = results.some((result) => result.status === "rejected");
@@ -80,36 +93,99 @@ export default function DashboardPage() {
         setError("CONNECTION ERROR — is the backend running?");
       }
 
-      const [summaryRes, riskRes, anomalyRes, historyRes, chartRes, regionRes] = results;
+      const [summaryRes, anomalyRes] = results;
 
       if (summaryRes.status === "fulfilled") {
-        setSummary(normalizeForecastSummary(summaryRes.value));
-      }
-      if (riskRes.status === "fulfilled") {
-        setRisk(normalizeRisk(riskRes.value));
+        const normalizedSummary = normalizeForecastSummary(summaryRes.value);
+        setSummary(normalizedSummary);
+        setChartData(
+          normalizedSummary
+            .filter((item) => item.series !== "total_demand")
+            .map((item) => ({
+              ds: item.series,
+              actual: item.latestActual,
+              forecast: item.nextDayForecast,
+            })),
+        );
+
+        const analyzeResults = await Promise.allSettled(
+          STATES.map((state) =>
+            apiFetch<unknown>("/api/v1/analyze", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                region: state,
+                temp: 30,
+                solar_capacity: 2000,
+                storage_soc: 50,
+                is_festival: false,
+                sim_hour: 14,
+              }),
+            }),
+          ),
+        );
+
+        const riskRows: RiskItem[] = analyzeResults.map((result, index) => {
+          const state = STATES[index];
+          if (result.status !== "fulfilled") {
+            return { state, score: 55, level: "AMBER", decision: "HOLD" };
+          }
+          const normalizedDecision = normalizeResponse(result.value);
+          const level =
+            normalizedDecision.risk === "RED"
+              ? "RED"
+              : normalizedDecision.risk === "GREEN"
+                ? "GREEN"
+                : "AMBER";
+          const score = level === "RED" ? 82 : level === "GREEN" ? 35 : 58;
+          return {
+            state,
+            score,
+            level,
+            decision: normalizedDecision.decision,
+          };
+        });
+        setRisk(riskRows);
+
+        const bySeries = new Map(normalizedSummary.map((item) => [item.series, item]));
+        const regionRows: RegionSummaryItem[] = (Object.keys(REGION_GROUPS) as RegionSummaryItem["region"][]).map(
+          (regionName) => {
+            const states = REGION_GROUPS[regionName];
+            let demandTotal = 0;
+            let latestTotal = 0;
+            const riskScores: number[] = [];
+
+            states.forEach((state) => {
+              const summaryItem = bySeries.get(state);
+              demandTotal += summaryItem?.nextDayForecast ?? 0;
+              latestTotal += summaryItem?.latestActual ?? 0;
+              const riskItem = riskRows.find((item) => item.state === state);
+              riskScores.push(riskItem?.score ?? 55);
+            });
+
+            const demandChangePct =
+              latestTotal === 0 ? 0 : ((demandTotal - latestTotal) / latestTotal) * 100;
+            const riskScore =
+              riskScores.length === 0
+                ? 0
+                : riskScores.reduce((sum, value) => sum + value, 0) / riskScores.length;
+            const riskLevel: RegionSummaryItem["riskLevel"] =
+              riskScore < 33 ? "GREEN" : riskScore < 66 ? "AMBER" : "RED";
+
+            return {
+              region: regionName,
+              states,
+              demandTotal,
+              demandChangePct,
+              riskScore,
+              riskLevel,
+            };
+          },
+        );
+        setRegionSummary(regionRows);
       }
       if (anomalyRes.status === "fulfilled") {
         setAnomalies(normalizeAnomalies(anomalyRes.value).slice(0, 5));
-      }
-      if (historyRes.status === "fulfilled") {
-        setHistory(normalizeHistory(historyRes.value).slice(0, 5));
-      }
-      if (chartRes.status === "fulfilled") {
-        const normalized = normalizeForecastSeries(chartRes.value);
-        const merged: DashboardChartPoint[] = [
-          ...normalized.actuals.slice(-30).map((point) => ({
-            ds: point.ds,
-            actual: point.y,
-          })),
-          ...normalized.forecast.slice(0, 14).map((point) => ({
-            ds: point.ds,
-            forecast: point.yhat,
-          })),
-        ];
-        setChartData(merged);
-      }
-      if (regionRes.status === "fulfilled") {
-        setRegionSummary(normalizeRegionSummary(regionRes.value));
       }
 
       setLoading(false);
@@ -193,7 +269,7 @@ export default function DashboardPage() {
 
       <section className="grid gap-4 xl:grid-cols-5">
         <article className="min-w-0 rounded border border-[#1a2a1a] bg-[#0d1117] p-4 xl:col-span-3">
-          <p className="mb-3 text-sm text-[#cccccc]">Maharashtra demand outlook (MU)</p>
+          <p className="mb-3 text-sm text-[#cccccc]">State demand outlook (MU)</p>
           <div className="h-[260px]">
             <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
               <AreaChart data={chartData}>
@@ -267,7 +343,7 @@ export default function DashboardPage() {
           </table>
         </article>
         <article className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4">
-          <p className="mb-3 text-sm text-[#cccccc]">Recent decisions</p>
+          <p className="mb-3 text-sm text-[#cccccc]">Recent state decisions</p>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#1a2a1a] text-left text-[#cccccc]">
@@ -277,10 +353,10 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {history.map((row, index) => (
-                <tr key={`${row.timestamp}-${row.region}-${index}`} className="border-b border-[#1a2a1a]">
-                  <td className="py-2">{formatDateTime(row.timestamp)}</td>
-                  <td className="py-2">{row.region}</td>
+              {risk.map((row, index) => (
+                <tr key={`${row.state}-${index}`} className="border-b border-[#1a2a1a]">
+                  <td className="py-2">{formatDateTime(new Date().toISOString())}</td>
+                  <td className="py-2">{row.state}</td>
                   <td className={`py-2 font-bold ${decisionClass(row.decision)}`}>{row.decision}</td>
                 </tr>
               ))}
