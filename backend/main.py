@@ -4,7 +4,6 @@ import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-
 import pandas as pd
 import requests
 import uvicorn
@@ -25,7 +24,14 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 load_dotenv()
-app = FastAPI()
+app = FastAPI(title="Strategic Arbitrage Engine")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 
@@ -74,16 +80,6 @@ class GridLog(Base):
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
-
-
-app = FastAPI(title="Strategic Arbitrage Engine")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
-)
 
 
 @app.get("/")
