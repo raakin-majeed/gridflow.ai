@@ -689,28 +689,32 @@ def live_summary():
     return output
 
 
+def risk_level_from_score(score: float) -> str:
+    if score < 40:
+        return "GREEN"
+    if score < 70:
+        return "AMBER"
+    return "RED"
+
+
+def risk_recommendation_from_score(score: float) -> str:
+    if score >= 70:
+        return "Immediate action required — consider load shedding or emergency import"
+    if score >= 50:
+        return "Elevated demand expected — pre-position battery storage"
+    if score >= 33:
+        return "Grid stable — optimal window for battery charging"
+    return "Low stress — good time for maintenance scheduling"
+
+
 def risk_all_data() -> list[dict]:
     states = ["Maharashtra", "Gujarat", "Tamil_Nadu", "Delhi", "UP"]
     results = []
 
     for s in states:
         score = float(np.random.uniform(30, 85))
-
-        if score < 33:
-            level = "GREEN"
-        elif score < 66:
-            level = "AMBER"
-        else:
-            level = "RED"
-
-        if score >= 66:
-            recommendation = "Immediate action required — consider load shedding or emergency import"
-        elif score >= 50:
-            recommendation = "Elevated demand expected — pre-position battery storage"
-        elif score >= 33:
-            recommendation = "Grid stable — optimal window for battery charging"
-        else:
-            recommendation = "Low stress — good time for maintenance scheduling"
+        level = risk_level_from_score(score)
+        recommendation = risk_recommendation_from_score(score)
 
         results.append({
             "state": s,
@@ -719,6 +723,17 @@ def risk_all_data() -> list[dict]:
             "top_factors": ["demand", "anomaly"],
             "recommendation": recommendation
         })
+
+    national_score = sum(item["risk_score"] for item in results) / len(results) if results else 0.0
+    results.append(
+        {
+            "state": "NATIONAL",
+            "risk_score": round(national_score, 2),
+            "risk_level": risk_level_from_score(national_score),
+            "top_factors": ["aggregated"],
+            "recommendation": risk_recommendation_from_score(national_score),
+        }
+    )
 
     return results
 
@@ -784,12 +799,7 @@ def region_summary_data() -> list[dict]:
         )
         avg_risk = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0
 
-        if avg_risk < 33:
-            risk_level = "GREEN"
-        elif avg_risk < 66:
-            risk_level = "AMBER"
-        else:
-            risk_level = "RED"
+        risk_level = risk_level_from_score(avg_risk)
 
         output.append(
             {
