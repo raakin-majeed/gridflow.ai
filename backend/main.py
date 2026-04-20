@@ -367,7 +367,13 @@ def analyze(data: SimInput) -> dict:
     else:
         decision = "STORE"
 
-    impact = (future_price - current_price) * forecast_volume
+    # Standardized impact model: potential savings only (non-negative).
+    impact = round(
+        (future_price - current_price) * (demand_volume / 1000.0) * (data.storage_soc / 100.0),
+        2,
+    )
+    if impact < 0:
+        impact = 0
 
     if percent_change > 5:
         market_state = "Peak Demand"
@@ -407,11 +413,14 @@ def analyze(data: SimInput) -> dict:
             "risk": risk_level,
             "rationale": explanation_text
         },
-        "demand": round(demand_volume, 2),
+        "demand": round(demand_volume / 1000.0, 2),
+        "demand_unit": "MU",
         "price": round(current_price, 2),
+        "price_unit": "INR/MWh",
         "revenue": round(current_price * demand_volume * 0.1, 2),
         "eva": round(current_price * demand_volume * 0.02, 2),
-        "impact": round(impact, 2),
+        "impact": impact,
+        "impact_unit": "INR",
         "market_state": market_state,
         "confidence": round(confidence, 2),
         "percent_change": round(percent_change, 2),
@@ -537,6 +546,12 @@ def get_anomalies(limit: int = 50) -> list[dict]:
             ),
             axis=1,
         )
+        df["timestamp_dt"] = pd.to_datetime(df["timestamp"], errors="coerce")
+        df["hour_bucket"] = df["timestamp_dt"].dt.strftime("%Y-%m-%d %H:00:00")
+        df["hour_bucket"] = df["hour_bucket"].fillna(df["timestamp"].astype(str).str.slice(0, 13))
+        df = df.sort_values(by="timestamp_dt", ascending=False)
+        df = df.drop_duplicates(subset=["state", "hour_bucket"], keep="first")
+        df = df.head(10)
 
         return [
             {
@@ -688,12 +703,21 @@ def risk_all_data() -> list[dict]:
         else:
             level = "RED"
 
+        if score >= 66:
+            recommendation = "Immediate action required — consider load shedding or emergency import"
+        elif score >= 50:
+            recommendation = "Elevated demand expected — pre-position battery storage"
+        elif score >= 33:
+            recommendation = "Grid stable — optimal window for battery charging"
+        else:
+            recommendation = "Low stress — good time for maintenance scheduling"
+
         results.append({
             "state": s,
             "risk_score": round(score, 2),
             "risk_level": level,
             "top_factors": ["demand", "anomaly"],
-            "recommendation": "Monitor load closely"
+            "recommendation": recommendation
         })
 
     return results
