@@ -5,4 +5,6 @@ __pycache__/
 # Ignore raw data downloads and trained models
 data/*.csv
 models/*.pkl
-.ipynb_checkpoints/
+.ipynb_checkpoints/backend/.env
+frontend/.env.local
+data/*.db
