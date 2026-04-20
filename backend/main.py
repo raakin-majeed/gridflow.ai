@@ -1,6 +1,7 @@
 import math
 import os
 import random
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -259,6 +260,49 @@ SERIES_METRICS = {
 }
 
 
+def get_latest_and_forecast(series: str) -> tuple[float, float]:
+    alias_map = {
+        "Tamil Nadu": "Tamil_Nadu",
+        "TamilNadu": "Tamil_Nadu",
+        "Uttar Pradesh": "UP",
+    }
+    series = alias_map.get(series, series)
+
+    if series not in SERIES_FILE_MAP:
+        raise HTTPException(status_code=400, detail=f"Unsupported region/series: {series}")
+
+    file_series_name = SERIES_FILE_MAP[series]
+    actuals_path = FORECAST_DIR / f"{file_series_name}_actuals.csv"
+    forecast_path = FORECAST_DIR / f"{file_series_name}_forecast.csv"
+
+    if not actuals_path.exists() or not forecast_path.exists():
+        raise HTTPException(status_code=404, detail=f"Forecast files missing for {series}")
+
+    actuals_df = pd.read_csv(actuals_path)
+    forecast_df = pd.read_csv(forecast_path)
+
+    if actuals_df.empty or forecast_df.empty:
+        raise HTTPException(status_code=404, detail=f"Forecast data empty for {series}")
+
+    actuals_df["ds"] = pd.to_datetime(actuals_df["ds"], errors="coerce")
+    forecast_df["ds"] = pd.to_datetime(forecast_df["ds"], errors="coerce")
+    actuals_df = actuals_df.dropna(subset=["ds", "y"]).sort_values("ds")
+    forecast_df = forecast_df.dropna(subset=["ds", "yhat"]).sort_values("ds")
+
+    if actuals_df.empty or forecast_df.empty:
+        raise HTTPException(status_code=404, detail=f"Invalid forecast rows for {series}")
+
+    latest = float(actuals_df.iloc[-1]["y"])
+    boundary = actuals_df.iloc[-1]["ds"]
+    next_rows = forecast_df[forecast_df["ds"] > boundary]
+
+    if next_rows.empty:
+        raise HTTPException(status_code=404, detail=f"No next forecast value for {series}")
+
+    forecast_next = float(next_rows.iloc[0]["yhat"])
+    return latest, forecast_next
+
+
 class SimInput(BaseModel):
     region: str
     temp: float
@@ -287,41 +331,43 @@ def analyze(data: SimInput) -> dict:
         carbon_credit_price=data.carbon_credit_price,
     )
 
-    decision_data = result.get("decision", {}) if isinstance(result, dict) else {}
-    metrics = result.get("metrics", {}) if isinstance(result, dict) else {}
-    economics = result.get("economics", {}) if isinstance(result, dict) else {}
+    decision_data = result.get("decision", {})
+    metrics = result.get("metrics", {})
+    economics = result.get("economics", {})
 
-    decision = decision_data.get("signal", "UNKNOWN")
-    risk_level = decision_data.get("risk", "UNKNOWN")
-    next_forecast = metrics.get("demand_mw", 0)
-    current_price = economics.get("spot_price_inr_per_mwh", 0)
-    percent_change = result.get("percent_change", 0) if isinstance(result, dict) else 0
+    risk_level = str(decision_data.get("risk", "STABLE"))
+    current_price = float(economics.get("spot_price_inr_per_mwh"))
+    demand_volume = float(metrics.get("demand_mw"))
+    health_score = float(metrics.get("health_score"))
 
-    next_forecast = float(next_forecast) if 'next_forecast' in locals() else 400.0
-    current_price = float(current_price) if 'current_price' in locals() else 5.0
-    percent_change = float(percent_change) if 'percent_change' in locals() else 0.0
+    latest, forecast_next = get_latest_and_forecast(data.region)
+    if latest == 0:
+        raise HTTPException(status_code=400, detail=f"Latest actual is zero for {data.region}")
 
-    future_price = current_price * (1 + percent_change / 100)
+    percent_change = ((forecast_next - latest) / latest) * 100
+    forecast_volume = forecast_next
 
-    decision = decision if 'decision' in locals() else "HOLD"
+    is_peak_hour = 18 <= data.sim_hour <= 22
+    price = current_price
+    price += percent_change * 0.15
+    price += (60 - health_score) * 0.04
+    if is_peak_hour:
+        price *= 1.2
+    future_price = max(0.5, price)
 
-    risk_level = risk_level if 'risk_level' in locals() else "STABLE"
+    demand_rising = percent_change > 1.0
+    demand_falling = percent_change < -1.0
+    price_rising = future_price > current_price
+    price_low = current_price < 6.5
 
-    price_diff = future_price - current_price
-
-    scale = 0.001  # convert MW scale
-
-    if decision == "BUY":
-        impact = price_diff * next_forecast * scale
-    elif decision == "SELL":
-        impact = (-price_diff) * next_forecast * scale
+    if demand_rising and price_rising:
+        decision = "SELL"
+    elif demand_falling and price_low:
+        decision = "BUY"
     else:
-        impact = 0
+        decision = "STORE"
 
-    if abs(impact) < 1:
-        impact = impact * 100  # amplify small signals
-
-    impact = round(impact, 2)
+    impact = (future_price - current_price) * forecast_volume
 
     if percent_change > 5:
         market_state = "Peak Demand"
@@ -337,31 +383,39 @@ def analyze(data: SimInput) -> dict:
     else:
         alert = None
 
-    confidence = 100 - abs(percent_change * 5)
-    confidence = max(50, min(95, confidence))
+    confidence = max(50, min(95, 100 - abs(percent_change * 4)))
 
     trend = "rising" if percent_change > 0 else "falling"
+    price_delta = future_price - current_price
 
-    explanation_text = f"""
-Demand is {trend} by {abs(percent_change):.2f}%.
-Current price: {current_price:.2f}, expected: {future_price:.2f}.
-Market condition: {market_state}.
-Recommended action: {decision}.
-"""
+    print("LATEST:", latest)
+    print("FORECAST:", forecast_next)
+    print("CHANGE:", percent_change)
+    print("PRICE:", future_price)
+
+    explanation_text = (
+        f"Demand is changing by {percent_change:.2f}% ({trend}) from latest actual to next forecast. "
+        f"Current price: {current_price:.2f}, future price: {future_price:.2f}. "
+        f"Price delta: {price_delta:.2f}. "
+        f"Demand volume used for impact: {forecast_volume:.2f}. "
+        f"Decision: {decision} based on demand and pricing momentum."
+    )
 
     return {
         "decision": {
             "signal": decision,
             "risk": risk_level,
-            "rationale": explanation_text.strip()
+            "rationale": explanation_text
         },
-        "demand": round(next_forecast, 2),
+        "demand": round(demand_volume, 2),
         "price": round(current_price, 2),
-        "revenue": round(current_price * next_forecast * 0.1, 2),
-        "eva": round(current_price * next_forecast * 0.02, 2),
-        "impact": impact,
+        "revenue": round(current_price * demand_volume * 0.1, 2),
+        "eva": round(current_price * demand_volume * 0.02, 2),
+        "impact": round(impact, 2),
         "market_state": market_state,
         "confidence": round(confidence, 2),
+        "percent_change": round(percent_change, 2),
+        "future_price": round(future_price, 2),
         "alert": alert
     }
 
@@ -415,6 +469,14 @@ def get_decision_history(limit: int = 200) -> list[dict]:
 
 @app.get("/api/v1/anomalies")
 def get_anomalies(limit: int = 50) -> list[dict]:
+    def normalize(series: pd.Series) -> pd.Series:
+        min_val = float(series.min())
+        max_val = float(series.max())
+        if max_val == min_val:
+            # Neutral midpoint when there is no spread in anomaly scores.
+            return pd.Series([0.5 for _ in series], index=series.index, dtype=float)
+        return (series - min_val) / (max_val - min_val)
+
     safe_limit = max(1, min(limit, 500))
     with engine.connect() as conn:
         rows = conn.execute(
@@ -429,29 +491,68 @@ def get_anomalies(limit: int = 50) -> list[dict]:
             {"limit": safe_limit},
         ).mappings()
 
-        anomalies: list[dict] = []
+        anomalies_raw: list[dict] = []
         for row in rows:
             health = float(row["health"]) if row["health"] is not None else 100.0
             price = float(row["price_val"]) if row["price_val"] is not None else 0.0
 
             if health < 60 or price >= 10:
-                severity = "HIGH" if (health < 60 or price >= 12) else "MEDIUM"
-                message = (
-                    f"Health {health:.2f}, price {price:.2f}, signal {row['signal']}"
-                )
-                anomalies.append(
+                demand = float(row["demand"]) if row["demand"] is not None else 0.0
+                health_gap = max(0.0, 100.0 - health)
+                price_pressure = max(0.0, price - 10.0) * 10.0
+                anomaly_score = health_gap + price_pressure
+
+                anomalies_raw.append(
                     {
                         "timestamp": row["timestamp"],
                         "region": row["region"],
-                        "demand": float(row["demand"]) if row["demand"] is not None else 0.0,
+                        "state": row["region"],
+                        "demand": demand,
                         "price": price,
                         "signal": row["signal"],
-                        "severity": severity,
-                        "message": message,
+                        "anomaly_score": anomaly_score,
+                        "raw_health": health,
                     }
                 )
 
-        return anomalies
+        if not anomalies_raw:
+            return []
+
+        df = pd.DataFrame(anomalies_raw)
+        df["normalized"] = normalize(df["anomaly_score"].astype(float))
+        df["health_score"] = ((1 - df["normalized"]) * 100).clip(lower=0, upper=100).round(2)
+
+        def score_to_severity(score: float) -> str:
+            if score >= 0.75:
+                return "HIGH"
+            if score >= 0.4:
+                return "MEDIUM"
+            return "LOW"
+
+        df["severity"] = df["normalized"].apply(score_to_severity)
+        df["message"] = df.apply(
+            lambda row: (
+                f"Health score {row['health_score']:.2f}, price {row['price']:.2f}, "
+                f"signal {row['signal']}"
+            ),
+            axis=1,
+        )
+
+        return [
+            {
+                "timestamp": row["timestamp"],
+                "region": row["region"],
+                "state": row["state"],
+                "demand": float(row["demand"]),
+                "price": float(row["price"]),
+                "signal": row["signal"],
+                "anomaly_score": float(row["anomaly_score"]),
+                "health_score": float(row["health_score"]),
+                "severity": row["severity"],
+                "message": row["message"],
+            }
+            for _, row in df.iterrows()
+        ]
 
 
 @app.get("/api/v1/forecast/summary")
@@ -598,6 +699,24 @@ def risk_all_data() -> list[dict]:
     return results
 
 
+RISK_CACHE_TTL_SECONDS = 60
+_risk_cache_value: list[dict] = []
+_risk_cache_computed_at = 0.0
+
+
+def get_cached_risk_all_data() -> list[dict]:
+    global _risk_cache_value, _risk_cache_computed_at
+    now = time.time()
+    cache_age = now - _risk_cache_computed_at
+
+    if _risk_cache_value and cache_age < RISK_CACHE_TTL_SECONDS:
+        return [dict(item) for item in _risk_cache_value]
+
+    _risk_cache_value = risk_all_data()
+    _risk_cache_computed_at = now
+    return [dict(item) for item in _risk_cache_value]
+
+
 REGION_GROUPS = {
     "North": ["Delhi", "UP"],
     "West": ["Maharashtra", "Gujarat"],
@@ -607,7 +726,7 @@ REGION_GROUPS = {
 
 def region_summary_data() -> list[dict]:
     forecast_rows = forecast_summary()
-    risk_rows = risk_all_data()
+    risk_rows = get_cached_risk_all_data()
 
     forecast_by_series = {
         str(item.get("series")): item for item in forecast_rows if isinstance(item, dict)
@@ -664,7 +783,7 @@ def region_summary_data() -> list[dict]:
 
 @app.get("/api/v1/risk-score/all")
 def risk_all():
-    return risk_all_data()
+    return get_cached_risk_all_data()
 
 
 @app.get("/api/v1/regions/summary")

@@ -80,6 +80,15 @@ export default function DashboardPage() {
   const [regionSummary, setRegionSummary] = useState<RegionSummaryItem[]>([]);
   const [chartData, setChartData] = useState<DashboardChartPoint[]>([]);
 
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
+    console.log("CLIENT RUNNING");
+    fetch(`${base}/api/v1/forecast/summary`)
+      .then((res) => res.json())
+      .then((data) => console.log("DATA:", data))
+      .catch((err) => console.error(err));
+  }, []);
+
   const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -232,6 +241,12 @@ export default function DashboardPage() {
         title="Dashboard"
         subtitle="Morning briefing for India grid operations and market posture"
       />
+      <button
+        onClick={() => console.log("CLICK WORKING")}
+        className="rounded border border-[#1a2a1a] bg-[#0d1117] px-3 py-2 text-sm text-white"
+      >
+        TEST BUTTON
+      </button>
 
       {loading ? <p className="text-sm text-[#00ff88]">LOADING...</p> : null}
       {error ? <p className="text-sm text-[#ff4455]">{error}</p> : null}

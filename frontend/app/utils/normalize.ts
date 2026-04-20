@@ -179,7 +179,7 @@ export function normalizeAnomalies(data: unknown): NormalizedAnomalyItem[] {
     return {
       timestamp: toString(row.timestamp, ""),
       region: toString(row.region),
-      health: toNumber(row.health, 0),
+      health: toNumber(row.health_score ?? row.health, 0),
       price: toNumber(row.price, 0),
       signal: toString(row.signal, "UNKNOWN"),
       severity: toString(row.severity, "LOW"),
