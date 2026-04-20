@@ -42,11 +42,12 @@ export default function SimulatorPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<NormalizedDecision>(defaultResult);
 
-  const runAnalysis = useCallback(async () => {
+  const handleRunAnalysis = useCallback(async () => {
     if (!region) return;
     setLoading(true);
     setError(null);
     try {
+      console.log("RUN ANALYSIS REQUEST:", { region, temp, solar, storage, hour, festival });
       const payload = await apiFetch<unknown>("/api/v1/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -59,9 +60,11 @@ export default function SimulatorPage() {
           sim_hour: hour,
         }),
       });
+      console.log("ANALYSIS:", payload);
       setResult(normalizeResponse(payload));
       setHasRun(true);
-    } catch {
+    } catch (e) {
+      console.error(e);
       setError("CONNECTION ERROR — is the backend running?");
     } finally {
       setLoading(false);
@@ -76,10 +79,10 @@ export default function SimulatorPage() {
   useEffect(() => {
     if (!hasRun) return;
     const timer = window.setTimeout(() => {
-      void runAnalysis();
+      void handleRunAnalysis();
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [hasRun, temp, solar, storage, hour, runAnalysis]);
+  }, [hasRun, temp, solar, storage, hour, handleRunAnalysis]);
 
   const netLoad = useMemo(() => Math.max(result.demand - solar, 0), [result.demand, solar]);
   const healthScore = useMemo(() => {
@@ -179,7 +182,7 @@ export default function SimulatorPage() {
 
             <button
               className="w-full rounded border border-[#1a2a1a] bg-[#00ff88] py-2 font-bold text-black"
-              onClick={() => void runAnalysis()}
+              onClick={() => void handleRunAnalysis()}
               disabled={loading || !region}
             >
               {loading ? "RUNNING..." : "RUN ANALYSIS"}

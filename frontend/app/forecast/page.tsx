@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../components/page-header";
 import {
   Area,
@@ -43,66 +43,68 @@ export default function ForecastPage() {
   const [tableRows, setTableRows] = useState<
     Array<{ ds: string; yhat: number; yhat_lower: number; yhat_upper: number }>
   >([]);
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const payload = await apiFetch<unknown>("/api/v1/forecast/summary");
-        const summary = normalizeForecastSummary(payload);
-        const selected =
-          summary.find((item) => item.series === series) ??
-          summary.find((item) => item.series === "total_demand");
+  const fetchForecastData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const payload = await apiFetch<unknown>("/api/v1/forecast/summary");
+      const summary = normalizeForecastSummary(payload);
+      console.log("DATA:", summary);
+      const selected =
+        summary.find((item) => item.series === series) ??
+        summary.find((item) => item.series === "total_demand");
 
-        const latestActual = selected?.latestActual ?? 0;
-        const nextForecast = selected?.nextDayForecast ?? 0;
-        const percentChange =
-          latestActual === 0 ? 0 : ((nextForecast - latestActual) / latestActual) * 100;
+      const latestActual = selected?.latestActual ?? 0;
+      const nextForecast = selected?.nextDayForecast ?? 0;
+      const percentChange =
+        latestActual === 0 ? 0 : ((nextForecast - latestActual) / latestActual) * 100;
 
-        const baseDate = new Date();
-        const composed: ForecastRow[] = Array.from({ length: 14 }).map((_, index) => {
-          const day = new Date(baseDate);
-          day.setDate(baseDate.getDate() + index);
-          const drift = 1 + (percentChange / 100) * (index / 14);
-          const forecast = nextForecast * drift;
-          const lower = forecast * 0.95;
-          const upper = forecast * 1.05;
-          return {
-            ds: day.toISOString().slice(0, 10),
-            actual: index === 0 ? latestActual : undefined,
-            forecast,
-            lower,
-            upper,
-            band: upper - lower,
-          };
-        });
+      const baseDate = new Date();
+      const composed: ForecastRow[] = Array.from({ length: 14 }).map((_, index) => {
+        const day = new Date(baseDate);
+        day.setDate(baseDate.getDate() + index);
+        const drift = 1 + (percentChange / 100) * (index / 14);
+        const forecast = nextForecast * drift;
+        const lower = forecast * 0.95;
+        const upper = forecast * 1.05;
+        return {
+          ds: day.toISOString().slice(0, 10),
+          actual: index === 0 ? latestActual : undefined,
+          forecast,
+          lower,
+          upper,
+          band: upper - lower,
+        };
+      });
 
-        setRows(composed);
-        setMetrics({
-          mae: selected?.mae ?? 0,
-          rmse: selected?.rmse ?? 0,
-          next: nextForecast,
-          change: percentChange,
-        });
-        setTableRows(
-          composed.map((item) => ({
-            ds: item.ds,
-            yhat: item.forecast ?? 0,
-            yhat_lower: item.lower ?? 0,
-            yhat_upper: item.upper ?? 0,
-          })),
-        );
-      } catch {
-        setError("CONNECTION ERROR — is the backend running?");
-        setRows([]);
-        setTableRows([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    void load();
+      setRows(composed);
+      setMetrics({
+        mae: selected?.mae ?? 0,
+        rmse: selected?.rmse ?? 0,
+        next: nextForecast,
+        change: percentChange,
+      });
+      setTableRows(
+        composed.map((item) => ({
+          ds: item.ds,
+          yhat: item.forecast ?? 0,
+          yhat_lower: item.lower ?? 0,
+          yhat_upper: item.upper ?? 0,
+        })),
+      );
+    } catch (e) {
+      console.error(e);
+      setError("CONNECTION ERROR — is the backend running?");
+      setRows([]);
+      setTableRows([]);
+    } finally {
+      setLoading(false);
+    }
   }, [series]);
+
+  useEffect(() => {
+    void fetchForecastData();
+  }, [fetchForecastData]);
 
   const trendLabel = useMemo(
     () => (metrics.change >= 0 ? `+${formatNumber(metrics.change)}` : formatNumber(metrics.change)),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "./components/page-header";
 import {
   Area,
@@ -79,10 +79,10 @@ export default function DashboardPage() {
   const [regionSummary, setRegionSummary] = useState<RegionSummaryItem[]>([]);
   const [chartData, setChartData] = useState<DashboardChartPoint[]>([]);
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      setError(null);
+  const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
       const results = await Promise.allSettled([
         apiFetch<unknown>("/api/v1/forecast/summary"),
         apiFetch<unknown>("/api/v1/anomalies"),
@@ -97,6 +97,7 @@ export default function DashboardPage() {
 
       if (summaryRes.status === "fulfilled") {
         const normalizedSummary = normalizeForecastSummary(summaryRes.value);
+        console.log("DATA:", normalizedSummary);
         setSummary(normalizedSummary);
         setChartData(
           normalizedSummary
@@ -131,6 +132,7 @@ export default function DashboardPage() {
             return { state, score: 55, level: "AMBER", decision: "HOLD" };
           }
           const normalizedDecision = normalizeResponse(result.value);
+          console.log("ANALYSIS:", normalizedDecision);
           const level =
             normalizedDecision.risk === "RED"
               ? "RED"
@@ -185,14 +187,21 @@ export default function DashboardPage() {
         setRegionSummary(regionRows);
       }
       if (anomalyRes.status === "fulfilled") {
+        console.log("ANOMALIES:", anomalyRes.value);
         setAnomalies(normalizeAnomalies(anomalyRes.value).slice(0, 5));
       }
 
       setLoading(false);
-    };
-
-    void load();
+    } catch (e) {
+      console.error(e);
+      setError("CONNECTION ERROR — is the backend running?");
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void fetchDashboardData();
+  }, [fetchDashboardData]);
 
   const totalDemandTomorrow = useMemo(() => {
     const total = summary.find((item) => item.series === "total_demand");
