@@ -12,9 +12,10 @@ import {
   XAxis,
   YAxis,
 } from "../components/recharts";
-import { apiFetch } from "../utils/api";
 import { formatDate, formatNumber } from "../utils/format";
 import { normalizeForecastSummary } from "../utils/normalize";
+
+const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
 
 type ForecastRow = {
   ds: string;
@@ -47,7 +48,10 @@ export default function ForecastPage() {
     setLoading(true);
     setError(null);
     try {
-      const payload = await apiFetch<unknown>("/api/v1/forecast/summary");
+      const base = API.endsWith("/") ? API.slice(0, -1) : API;
+      const res = await fetch(`${base}/api/v1/forecast/summary`);
+      if (!res.ok) throw new Error("API error");
+      const payload = await res.json();
       const summary = normalizeForecastSummary(payload);
       console.log("DATA:", summary);
       const selected =

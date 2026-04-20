@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "../components/page-header";
-import { apiFetch } from "../utils/api";
 import { formatNumber } from "../utils/format";
 import { normalizeResponse, type NormalizedDecision } from "../utils/normalize";
 
@@ -27,6 +26,7 @@ const decisionClass = (decision: string): string => {
 };
 
 const STATES = ["Maharashtra", "Gujarat", "Tamil_Nadu", "Delhi", "UP"];
+const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
 
 export default function SimulatorPage() {
   const [states] = useState<string[]>(STATES);
@@ -48,7 +48,8 @@ export default function SimulatorPage() {
     setError(null);
     try {
       console.log("RUN ANALYSIS REQUEST:", { region, temp, solar, storage, hour, festival });
-      const payload = await apiFetch<unknown>("/api/v1/analyze", {
+      const base = API.endsWith("/") ? API.slice(0, -1) : API;
+      const res = await fetch(`${base}/api/v1/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -60,6 +61,8 @@ export default function SimulatorPage() {
           sim_hour: hour,
         }),
       });
+      if (!res.ok) throw new Error("API error");
+      const payload = (await res.json()) as unknown;
       console.log("ANALYSIS:", payload);
       setResult(normalizeResponse(payload));
       setHasRun(true);

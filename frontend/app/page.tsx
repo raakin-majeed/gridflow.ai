@@ -11,7 +11,6 @@ import {
   XAxis,
   YAxis,
 } from "./components/recharts";
-import { apiFetch } from "./utils/api";
 import { formatDateTime, formatNumber } from "./utils/format";
 import {
   normalizeAnomalies,
@@ -19,6 +18,8 @@ import {
   normalizeResponse,
   type NormalizedAnomalyItem,
 } from "./utils/normalize";
+
+const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
 
 type DashboardChartPoint = {
   ds: string;
@@ -83,9 +84,10 @@ export default function DashboardPage() {
     setLoading(true);
     setError(null);
     try {
+      const base = API.endsWith("/") ? API.slice(0, -1) : API;
       const results = await Promise.allSettled([
-        apiFetch<unknown>("/api/v1/forecast/summary"),
-        apiFetch<unknown>("/api/v1/anomalies"),
+        fetch(`${base}/api/v1/forecast/summary`),
+        fetch(`${base}/api/v1/anomalies`),
       ]);
 
       const anyFailed = results.some((result) => result.status === "rejected");
@@ -96,7 +98,9 @@ export default function DashboardPage() {
       const [summaryRes, anomalyRes] = results;
 
       if (summaryRes.status === "fulfilled") {
-        const normalizedSummary = normalizeForecastSummary(summaryRes.value);
+        if (!summaryRes.value.ok) throw new Error("API error");
+        const summaryJson = await summaryRes.value.json();
+        const normalizedSummary = normalizeForecastSummary(summaryJson);
         console.log("DATA:", normalizedSummary);
         setSummary(normalizedSummary);
         setChartData(
@@ -111,7 +115,7 @@ export default function DashboardPage() {
 
         const analyzeResults = await Promise.allSettled(
           STATES.map((state) =>
-            apiFetch<unknown>("/api/v1/analyze", {
+            fetch(`${base}/api/v1/analyze`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -126,27 +130,31 @@ export default function DashboardPage() {
           ),
         );
 
-        const riskRows: RiskItem[] = analyzeResults.map((result, index) => {
-          const state = STATES[index];
-          if (result.status !== "fulfilled") {
-            return { state, score: 55, level: "AMBER", decision: "HOLD" };
-          }
-          const normalizedDecision = normalizeResponse(result.value);
-          console.log("ANALYSIS:", normalizedDecision);
-          const level =
-            normalizedDecision.risk === "RED"
-              ? "RED"
-              : normalizedDecision.risk === "GREEN"
-                ? "GREEN"
-                : "AMBER";
-          const score = level === "RED" ? 82 : level === "GREEN" ? 35 : 58;
-          return {
-            state,
-            score,
-            level,
-            decision: normalizedDecision.decision,
-          };
-        });
+        const riskRows: RiskItem[] = await Promise.all(
+          analyzeResults.map(async (result, index) => {
+            const state = STATES[index];
+            if (result.status !== "fulfilled" || !result.value.ok) {
+              return { state, score: 55, level: "AMBER", decision: "HOLD" };
+            }
+            const payload = await result.value.json();
+            console.log("ANALYSIS DATA:", payload);
+            const normalizedDecision = normalizeResponse(payload);
+            console.log("ANALYSIS:", normalizedDecision);
+            const level =
+              normalizedDecision.risk === "RED"
+                ? "RED"
+                : normalizedDecision.risk === "GREEN"
+                  ? "GREEN"
+                  : "AMBER";
+            const score = level === "RED" ? 82 : level === "GREEN" ? 35 : 58;
+            return {
+              state,
+              score,
+              level,
+              decision: normalizedDecision.decision,
+            };
+          }),
+        );
         setRisk(riskRows);
 
         const bySeries = new Map(normalizedSummary.map((item) => [item.series, item]));
@@ -187,8 +195,10 @@ export default function DashboardPage() {
         setRegionSummary(regionRows);
       }
       if (anomalyRes.status === "fulfilled") {
-        console.log("ANOMALIES:", anomalyRes.value);
-        setAnomalies(normalizeAnomalies(anomalyRes.value).slice(0, 5));
+        if (!anomalyRes.value.ok) throw new Error("API error");
+        const anomalyJson = await anomalyRes.value.json();
+        console.log("ANOMALIES:", anomalyJson);
+        setAnomalies(normalizeAnomalies(anomalyJson).slice(0, 5));
       }
 
       setLoading(false);
