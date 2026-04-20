@@ -589,9 +589,78 @@ def risk_all_data() -> list[dict]:
     return results
 
 
+REGION_GROUPS = {
+    "North": ["Delhi", "UP"],
+    "West": ["Maharashtra", "Gujarat"],
+    "South": ["Tamil_Nadu"],
+}
+
+
+def region_summary_data() -> list[dict]:
+    forecast_rows = forecast_summary()
+    risk_rows = risk_all_data()
+
+    forecast_by_series = {
+        str(item.get("series")): item for item in forecast_rows if isinstance(item, dict)
+    }
+    risk_by_state = {
+        str(item.get("state")): item for item in risk_rows if isinstance(item, dict)
+    }
+
+    output: list[dict] = []
+
+    for region_name, states in REGION_GROUPS.items():
+        demand_total = 0.0
+        latest_total = 0.0
+        risk_scores: list[float] = []
+
+        for state in states:
+            forecast_item = forecast_by_series.get(state, {})
+            next_forecast = float(forecast_item.get("next_day_forecast", 0) or 0)
+            latest_actual = float(forecast_item.get("latest_actual", 0) or 0)
+
+            demand_total += next_forecast
+            latest_total += latest_actual
+
+            risk_item = risk_by_state.get(state, {})
+            risk_scores.append(float(risk_item.get("risk_score", 0) or 0))
+
+        demand_change_pct = (
+            ((demand_total - latest_total) / latest_total) * 100
+            if latest_total > 0
+            else 0.0
+        )
+        avg_risk = sum(risk_scores) / len(risk_scores) if risk_scores else 0.0
+
+        if avg_risk < 33:
+            risk_level = "GREEN"
+        elif avg_risk < 66:
+            risk_level = "AMBER"
+        else:
+            risk_level = "RED"
+
+        output.append(
+            {
+                "region": region_name,
+                "states": states,
+                "demand_total": round(demand_total, 2),
+                "demand_change_pct": round(demand_change_pct, 2),
+                "risk_score": round(avg_risk, 2),
+                "risk_level": risk_level,
+            }
+        )
+
+    return output
+
+
 @app.get("/api/v1/risk-score/all")
 def risk_all():
     return risk_all_data()
+
+
+@app.get("/api/v1/regions/summary")
+def regions_summary():
+    return region_summary_data()
 
 
 @app.post("/api/v1/query")
