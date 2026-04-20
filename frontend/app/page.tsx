@@ -1,0 +1,293 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { PageHeader } from "./components/page-header";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "./components/recharts";
+import { apiFetch } from "./utils/api";
+import { formatDateTime, formatNumber } from "./utils/format";
+import {
+  normalizeAnomalies,
+  normalizeForecastSeries,
+  normalizeForecastSummary,
+  normalizeHistory,
+  normalizeRegionSummary,
+  normalizeRisk,
+  type NormalizedAnomalyItem,
+  type NormalizedHistoryItem,
+  type RegionSummaryItem,
+  type RiskItem,
+} from "./utils/normalize";
+
+type DashboardChartPoint = {
+  ds: string;
+  actual?: number;
+  forecast?: number;
+};
+
+const levelColor = (level: string): string => {
+  if (level === "RED") return "bg-[#ff4455]";
+  if (level === "AMBER") return "bg-[#ffaa00]";
+  return "bg-[#00ff88]";
+};
+
+const levelTextClass = (level: string): string => {
+  if (level === "RED") return "text-[#ff4455]";
+  if (level === "AMBER") return "text-[#ffaa00]";
+  return "text-[#00ff88]";
+};
+
+const decisionClass = (decision: string): string => {
+  if (decision === "BUY") return "text-[#00ff88]";
+  if (decision === "SELL") return "text-[#ff4455]";
+  return "text-[#ffaa00]";
+};
+
+export default function DashboardPage() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<
+    Array<{ series: string; mae: number; rmse: number; latestActual: number; nextDayForecast: number }>
+  >([]);
+  const [risk, setRisk] = useState<RiskItem[]>([]);
+  const [anomalies, setAnomalies] = useState<NormalizedAnomalyItem[]>([]);
+  const [history, setHistory] = useState<NormalizedHistoryItem[]>([]);
+  const [regionSummary, setRegionSummary] = useState<RegionSummaryItem[]>([]);
+  const [chartData, setChartData] = useState<DashboardChartPoint[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      const results = await Promise.allSettled([
+        apiFetch<unknown>("/api/v1/forecast/summary"),
+        apiFetch<unknown>("/api/v1/risk-score/all"),
+        apiFetch<unknown>("/api/v1/anomalies?limit=20"),
+        apiFetch<unknown>("/api/v1/history?limit=20"),
+        apiFetch<unknown>("/api/v1/forecast/Maharashtra"),
+        apiFetch<unknown>("/api/v1/regions/summary"),
+      ]);
+
+      const anyFailed = results.some((result) => result.status === "rejected");
+      if (anyFailed) {
+        setError("CONNECTION ERROR — is the backend running?");
+      }
+
+      const [summaryRes, riskRes, anomalyRes, historyRes, chartRes, regionRes] = results;
+
+      if (summaryRes.status === "fulfilled") {
+        setSummary(normalizeForecastSummary(summaryRes.value));
+      }
+      if (riskRes.status === "fulfilled") {
+        setRisk(normalizeRisk(riskRes.value));
+      }
+      if (anomalyRes.status === "fulfilled") {
+        setAnomalies(normalizeAnomalies(anomalyRes.value).slice(0, 5));
+      }
+      if (historyRes.status === "fulfilled") {
+        setHistory(normalizeHistory(historyRes.value).slice(0, 5));
+      }
+      if (chartRes.status === "fulfilled") {
+        const normalized = normalizeForecastSeries(chartRes.value);
+        const merged: DashboardChartPoint[] = [
+          ...normalized.actuals.slice(-30).map((point) => ({
+            ds: point.ds,
+            actual: point.y,
+          })),
+          ...normalized.forecast.slice(0, 14).map((point) => ({
+            ds: point.ds,
+            forecast: point.yhat,
+          })),
+        ];
+        setChartData(merged);
+      }
+      if (regionRes.status === "fulfilled") {
+        setRegionSummary(normalizeRegionSummary(regionRes.value));
+      }
+
+      setLoading(false);
+    };
+
+    void load();
+  }, []);
+
+  const totalDemandTomorrow = useMemo(() => {
+    const total = summary.find((item) => item.series === "total_demand");
+    return total?.nextDayForecast ?? 0;
+  }, [summary]);
+
+  const highestRisk = useMemo(() => {
+    return [...risk].sort((a, b) => b.score - a.score)[0] ?? null;
+  }, [risk]);
+
+  const bestAccuracy = useMemo(() => {
+    return [...summary].sort((a, b) => a.mae - b.mae)[0] ?? null;
+  }, [summary]);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Dashboard"
+        subtitle="Morning briefing for India grid operations and market posture"
+      />
+
+      {loading ? <p className="text-sm text-[#00ff88]">LOADING...</p> : null}
+      {error ? <p className="text-sm text-[#ff4455]">{error}</p> : null}
+
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <article className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4">
+          <p className="text-xs text-[#cccccc]">National Demand Tomorrow</p>
+          <p className="mt-2 text-2xl font-bold">{formatNumber(totalDemandTomorrow)} MU</p>
+        </article>
+        <article className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4">
+          <p className="text-xs text-[#cccccc]">Highest Risk State</p>
+          <div className="mt-2 flex items-center gap-2">
+            <p className="text-xl font-bold">{highestRisk?.state ?? "N/A"}</p>
+            <span
+              className={`rounded px-2 py-1 text-xs font-bold ${levelTextClass(highestRisk?.level ?? "GREEN")}`}
+            >
+              {highestRisk?.level ?? "GREEN"}
+            </span>
+          </div>
+        </article>
+        <article className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4">
+          <p className="text-xs text-[#cccccc]">Active Anomalies</p>
+          <p className="mt-2 text-2xl font-bold">{anomalies.length} events</p>
+        </article>
+        <article className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4">
+          <p className="text-xs text-[#cccccc]">Best Forecast Accuracy</p>
+          <p className="mt-2 text-xl font-bold">{bestAccuracy?.series ?? "N/A"}</p>
+          <p className="text-xs text-[#cccccc]">MAE {formatNumber(bestAccuracy?.mae ?? 0)} MU</p>
+        </article>
+      </section>
+
+      <section className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4">
+        <p className="mb-3 text-sm text-[#cccccc]">Region View</p>
+        <div className="grid gap-4 md:grid-cols-3">
+          {regionSummary.map((item) => (
+            <article key={item.region} className="rounded border border-[#1a2a1a] bg-[#07080d] p-3">
+              <p className="text-sm font-bold text-white">{item.region}</p>
+              <p className={`mt-2 text-xs ${levelTextClass(item.riskLevel)}`}>
+                {item.region} Region Risk: {formatNumber(item.riskScore)} pts ({item.riskLevel})
+              </p>
+              <p className="mt-2 text-xs text-[#cccccc]">
+                {item.region} Region Demand Trend: {formatNumber(item.demandTotal)} MU (
+                {item.demandChangePct >= 0 ? "+" : ""}
+                {formatNumber(item.demandChangePct)}%)
+              </p>
+              <p className="mt-1 text-xs text-[#cccccc]">States: {item.states.join(", ")}</p>
+            </article>
+          ))}
+          {regionSummary.length === 0 ? (
+            <p className="text-sm text-[#cccccc]">No regional aggregates available.</p>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-5">
+        <article className="min-w-0 rounded border border-[#1a2a1a] bg-[#0d1117] p-4 xl:col-span-3">
+          <p className="mb-3 text-sm text-[#cccccc]">Maharashtra demand outlook (MU)</p>
+          <div className="h-[260px]">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={260}>
+              <AreaChart data={chartData}>
+                <CartesianGrid stroke="#1a2a1a" />
+                <XAxis dataKey="ds" tick={{ fill: "#cccccc", fontSize: 11 }} />
+                <YAxis tick={{ fill: "#cccccc", fontSize: 11 }} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "#0d1117", border: "1px solid #1a2a1a" }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="actual"
+                  stroke="#999999"
+                  fill="#999999"
+                  fillOpacity={0.2}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="forecast"
+                  stroke="#00ff88"
+                  fillOpacity={0}
+                  strokeDasharray="6 4"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </article>
+        <article className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4 xl:col-span-2">
+          <p className="mb-4 text-sm text-[#cccccc]">Risk scores by state</p>
+          <div className="space-y-3">
+            {risk.map((item) => (
+              <div key={item.state}>
+                <div className="mb-1 flex items-center justify-between text-sm">
+                  <span>{item.state}</span>
+                  <span>{formatNumber(item.score)} pts</span>
+                </div>
+                <div className="h-2 w-full rounded bg-[#07080d]">
+                  <div
+                    className={`h-2 rounded ${levelColor(item.level)}`}
+                    style={{ width: `${Math.min(100, Math.max(0, item.score))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-2">
+        <article className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4">
+          <p className="mb-3 text-sm text-[#cccccc]">Latest anomalies</p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#1a2a1a] text-left text-[#cccccc]">
+                <th className="pb-2">Time</th>
+                <th className="pb-2">State</th>
+                <th className="pb-2">Severity</th>
+              </tr>
+            </thead>
+            <tbody>
+              {anomalies.map((row, index) => (
+                <tr key={`${row.timestamp}-${row.region}-${index}`} className="border-b border-[#1a2a1a]">
+                  <td className="py-2">{formatDateTime(row.timestamp)}</td>
+                  <td className="py-2">{row.region}</td>
+                  <td className={`py-2 ${levelTextClass(row.severity === "HIGH" ? "RED" : "AMBER")}`}>
+                    {row.severity}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
+        <article className="rounded border border-[#1a2a1a] bg-[#0d1117] p-4">
+          <p className="mb-3 text-sm text-[#cccccc]">Recent decisions</p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#1a2a1a] text-left text-[#cccccc]">
+                <th className="pb-2">Time</th>
+                <th className="pb-2">Region</th>
+                <th className="pb-2">Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.map((row, index) => (
+                <tr key={`${row.timestamp}-${row.region}-${index}`} className="border-b border-[#1a2a1a]">
+                  <td className="py-2">{formatDateTime(row.timestamp)}</td>
+                  <td className="py-2">{row.region}</td>
+                  <td className={`py-2 font-bold ${decisionClass(row.decision)}`}>{row.decision}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </article>
+      </section>
+    </div>
+  );
+}
