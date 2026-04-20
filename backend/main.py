@@ -27,7 +27,11 @@ load_dotenv()
 app = FastAPI(title="Strategic Arbitrage Engine")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://gridflow-ai.vercel.app",
+        "https://*.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -938,6 +942,11 @@ def generate_report(series: str):
 @app.get("/api/v1/states")
 def get_states():
     return ["Maharashtra", "Gujarat", "Tamil Nadu", "Delhi", "UP"]
+
+
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

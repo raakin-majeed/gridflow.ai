@@ -26,7 +26,7 @@ const decisionClass = (decision: string): string => {
 };
 
 const STATES = ["Maharashtra", "Gujarat", "Tamil_Nadu", "Delhi", "UP"];
-const API = process.env.NEXT_PUBLIC_API_URL;
+const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
 console.log("API URL:", API);
 
 export default function SimulatorPage() {

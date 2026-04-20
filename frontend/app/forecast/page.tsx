@@ -15,7 +15,7 @@ import {
 import { formatDate, formatNumber } from "../utils/format";
 import { normalizeForecastSummary } from "../utils/normalize";
 
-const API = process.env.NEXT_PUBLIC_API_URL;
+const API = process.env.NEXT_PUBLIC_API_URL || "https://gridflow-ai.onrender.com";
 console.log("API URL:", API);
 
 type ForecastRow = {
