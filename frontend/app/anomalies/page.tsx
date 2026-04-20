@@ -47,7 +47,7 @@ export default function AnomaliesPage() {
       setLoading(true);
       setError(null);
       try {
-        const payload = await apiFetch<unknown>("/api/v1/anomalies?limit=100");
+        const payload = await apiFetch<unknown>("/api/v1/anomalies");
         const normalized = dedupeWithinFiveSeconds(normalizeAnomalies(payload)).slice(0, 20);
         setAnomalies(normalized);
       } catch {

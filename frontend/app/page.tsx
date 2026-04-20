@@ -85,7 +85,7 @@ export default function DashboardPage() {
       setError(null);
       const results = await Promise.allSettled([
         apiFetch<unknown>("/api/v1/forecast/summary"),
-        apiFetch<unknown>("/api/v1/anomalies?limit=20"),
+        apiFetch<unknown>("/api/v1/anomalies"),
       ]);
 
       const anyFailed = results.some((result) => result.status === "rejected");
