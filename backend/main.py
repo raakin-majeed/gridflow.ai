@@ -106,11 +106,11 @@ init_db()
 class GridBrain:
     def __init__(self) -> None:
         self.base_loads = {
-            "Northern": 85000,
-            "Western": 105000,
-            "Southern": 72000,
-            "Eastern": 51000,
-            "North-Eastern": 18000,
+            "Northern": 850,
+            "Western": 950,
+            "Southern": 720,
+            "Eastern": 510,
+            "North-Eastern": 180,
         }
 
     def _price_model(self, hour: int, health: float, is_fest: bool) -> float:
@@ -169,9 +169,8 @@ class GridBrain:
             solar = 0.0
 
         net_load = max(0.0, demand - solar)
-        health = 100 - (max(0.0, temp - 38) * 5) - min(50, (net_load / (base * 0.0001)))
+        health = 100 - (max(0.0, temp - 38) * 3) - min(40, (net_load / (base * 0.05)))
         health = max(0.0, min(100.0, round(health, 2)))
-        print(f"DEBUG: demand={demand}, solar={solar}, net_load={net_load}, health={health}")
 
         price_val = self._price_model(hour, health, is_fest)
         signal, rationale = self._recommend_signal(
