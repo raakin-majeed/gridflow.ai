@@ -2,7 +2,7 @@ import math
 import os
 import random
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import pandas as pd
 import requests
@@ -169,8 +169,9 @@ class GridBrain:
             solar = 0.0
 
         net_load = max(0.0, demand - solar)
-        health = 100 - (max(0.0, temp - 38) * 5) - (net_load / (base / 10))
+        health = 100 - (max(0.0, temp - 38) * 5) - min(50, (net_load / (base * 0.0001)))
         health = max(0.0, min(100.0, round(health, 2)))
+        print(f"DEBUG: demand={demand}, solar={solar}, net_load={net_load}, health={health}")
 
         price_val = self._price_model(hour, health, is_fest)
         signal, rationale = self._recommend_signal(
@@ -417,6 +418,8 @@ def analyze(data: SimInput) -> dict:
         "demand_unit": "MU",
         "price": round(current_price, 2),
         "price_unit": "INR/MWh",
+        "net_load_mw": round(float(metrics.get("net_load_mw", 0.0)), 2),
+        "health_score": round(float(metrics.get("health_score", 0.0)), 2),
         "revenue": round(current_price * demand_volume * 0.1, 2),
         "eva": round(current_price * demand_volume * 0.02, 2),
         "impact": impact,
@@ -700,27 +703,114 @@ def risk_level_from_score(score: float) -> str:
 def risk_recommendation_from_score(score: float) -> str:
     if score >= 70:
         return "Immediate action required — consider load shedding or emergency import"
-    if score >= 50:
+    if score > 55:
         return "Elevated demand expected — pre-position battery storage"
-    if score >= 33:
-        return "Grid stable — optimal window for battery charging"
-    return "Low stress — good time for maintenance scheduling"
+    if score >= 40:
+        return "Moderate stress — monitor closely through peak hours"
+    return "Grid stable — optimal window for battery charging or maintenance"
 
 
 def risk_all_data() -> list[dict]:
     states = ["Maharashtra", "Gujarat", "Tamil_Nadu", "Delhi", "UP"]
     results = []
+    now_utc = datetime.now(timezone.utc)
+    hour = datetime.now().hour
+    hour_risk = 1 if (7 <= hour < 10 or 18 <= hour < 23) else 0
+
+    anomalies_path = DATA_DIR / "anomalies.csv"
+    anomaly_counts: dict[str, int] = {state: 0 for state in states}
+
+    if anomalies_path.exists():
+        try:
+            anomalies_df = pd.read_csv(anomalies_path)
+            state_column = next(
+                (col for col in ["state", "region", "series"] if col in anomalies_df.columns),
+                None,
+            )
+            timestamp_column = next(
+                (
+                    col
+                    for col in ["timestamp", "ds", "date", "datetime"]
+                    if col in anomalies_df.columns
+                ),
+                None,
+            )
+            if state_column and timestamp_column:
+                anomalies_df[timestamp_column] = pd.to_datetime(
+                    anomalies_df[timestamp_column], errors="coerce", utc=True
+                )
+                cutoff = pd.Timestamp(now_utc - timedelta(days=7))
+                recent = anomalies_df[anomalies_df[timestamp_column] >= cutoff]
+                for state in states:
+                    aliases = {state, state.replace("_", " ")}
+                    anomaly_counts[state] = int(recent[state_column].isin(aliases).sum())
+        except Exception:
+            pass
+    else:
+        # Fallback when anomalies.csv is unavailable: derive anomalies from recent grid logs.
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT region, COUNT(*) AS cnt
+                    FROM grid_logs
+                    WHERE timestamp >= :cutoff
+                      AND (health < 60 OR price_val >= 10)
+                    GROUP BY region
+                    """
+                ),
+                {"cutoff": now_utc - timedelta(days=7)},
+            ).mappings()
+            for row in rows:
+                region = str(row["region"])
+                if region in anomaly_counts:
+                    anomaly_counts[region] = int(row["cnt"])
 
     for s in states:
-        score = float(np.random.uniform(30, 85))
+        file_series_name = SERIES_FILE_MAP.get(s, s)
+        actuals_path = FORECAST_DIR / f"{file_series_name}_actuals.csv"
+
+        latest_demand = 0.0
+        mean_30day = 0.0
+        mean_7day = 0.0
+        demand_normalized = 1.0
+        deviation_7day = 0.0
+
+        if actuals_path.exists():
+            df = pd.read_csv(actuals_path)
+            df = df.dropna(subset=["y"])
+            if not df.empty:
+                tail_30 = df.tail(30).copy()
+                tail_7 = df.tail(7).copy()
+                latest_demand = float(df.iloc[-1]["y"])
+                mean_30day = float(tail_30["y"].mean()) if not tail_30.empty else latest_demand
+                mean_7day = float(tail_7["y"].mean()) if not tail_7.empty else latest_demand
+                if mean_30day > 0:
+                    demand_normalized = latest_demand / mean_30day
+                if mean_7day > 0:
+                    deviation_7day = ((latest_demand - mean_7day) / mean_7day) * 100
+
+        anomaly_count = anomaly_counts.get(s, 0)
+        anomaly_score = min(100.0, anomaly_count * 15.0)
+        score = (
+            (demand_normalized * 35.0)
+            + (anomaly_score * 0.30)
+            + (hour_risk * 20.0)
+            + (abs(deviation_7day) * 0.15)
+        )
+        score = min(100.0, max(0.0, round(score, 2)))
         level = risk_level_from_score(score)
         recommendation = risk_recommendation_from_score(score)
 
         results.append({
             "state": s,
-            "risk_score": round(score, 2),
+            "risk_score": score,
             "risk_level": level,
-            "top_factors": ["demand", "anomaly"],
+            "top_factors": [
+                f"demand_norm={demand_normalized:.2f}",
+                f"anomaly_count_7d={anomaly_count}",
+                f"hour_risk={hour_risk}",
+            ],
             "recommendation": recommendation
         })
 
@@ -849,6 +939,18 @@ Risk Data:
 Recent Anomalies:
 {anomalies}
 """
+    system_prompt = f"""You are GridFlow AI, an expert electricity grid analyst for India. 
+You have access to real-time demand forecasts, anomaly detection results, and risk scores for Indian states.
+
+STRICT RULES:
+1. You ONLY answer questions about electricity, energy, power grids, demand forecasting, grid management, or the Indian energy sector.
+2. If the user asks ANYTHING outside of these topics — mathematics, general knowledge, coding, personal questions, or anything unrelated to energy/electricity — respond with exactly: "I can only answer questions about electricity demand, grid operations, and energy management. Please ask me something related to the Indian power grid."
+3. Never perform calculations, answer trivia, write code, or engage in general conversation.
+4. Always reference specific numbers from the data provided in your answer.
+5. Keep answers to 2-3 sentences maximum. Be direct and actionable.
+
+You have access to the following live grid data:
+{context}"""
 
     api_key = os.getenv("GROQ_API_KEY")
 
@@ -872,7 +974,7 @@ Recent Anomalies:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are GridFlow AI, an expert energy grid analyst. Answer in 2-3 sentences with real numbers and actionable insights."
+                        "content": system_prompt
                     },
                     {
                         "role": "user",
