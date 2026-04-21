@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "../components/page-header";
 import { formatNumber } from "../utils/format";
 import { normalizeResponse, type NormalizedDecision } from "../utils/normalize";
@@ -17,6 +17,8 @@ const defaultResult: NormalizedDecision = {
   alert: null,
   risk: "STABLE",
   explanation: "Awaiting model output.",
+  net_load_mw: 0,
+  health_score: 0,
 };
 
 const decisionClass = (decision: string): string => {
@@ -94,12 +96,8 @@ export default function SimulatorPage() {
     return () => window.clearTimeout(timer);
   }, [hasRun, temp, solar, storage, hour, handleRunAnalysis]);
 
-  const netLoad = useMemo(() => Math.max(result.demand - solar, 0), [result.demand, solar]);
-  const healthScore = useMemo(() => {
-    if (result.risk === "RED") return 45;
-    if (result.risk === "AMBER") return 70;
-    return 88;
-  }, [result.risk]);
+  const netLoad = result.net_load_mw ?? 0;
+  const healthScore = result.health_score ?? 0;
 
   return (
     <div className="space-y-6">

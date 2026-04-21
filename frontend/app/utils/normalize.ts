@@ -27,6 +27,8 @@ export type NormalizedDecision = {
   alert: string | null;
   risk: string;
   explanation: string;
+  net_load_mw: number;
+  health_score: number;
 };
 
 export type ForecastSummaryItem = {
@@ -107,6 +109,8 @@ export function normalizeResponse(data: unknown): NormalizedDecision {
       decisionNode.rationale ?? root.explanation,
       "No explanation available",
     ),
+    net_load_mw: toNumber(root.net_load_mw, 0),
+    health_score: toNumber(root.health_score, 0),
   };
 }
 
