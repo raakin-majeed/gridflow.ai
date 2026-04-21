@@ -108,12 +108,10 @@ export default function DashboardPage() {
       const results = await Promise.allSettled([
         fetch(summaryUrl),
         fetch(anomaliesUrl),
+        fetch(`${base}/api/v1/risk-score/all`),
       ]);
 
-      const anyFailed = results.some((result) => result.status === "rejected");
-      if (anyFailed) {
-        setError("CONNECTION ERROR — is the backend running?");
-      }
+      // Don't block the whole dashboard if one call fails
 
       const [summaryRes, anomalyRes] = results;
 
@@ -136,35 +134,27 @@ export default function DashboardPage() {
             })),
         );
 
-        const riskResponse = await fetch(`${API_BASE}/api/v1/risk-score/all`);
-        if (!riskResponse.ok) {
-          console.error("API failed", riskResponse.status);
-          throw new Error("API error");
-        }
-        const riskData = (await riskResponse.json()) as Array<{
-          state: string;
-          risk_score: number;
-          risk_level: string;
-          recommendation: string;
-        }>;
-        const riskRows: RiskItem[] = riskData
-          .filter((row: { state: string }) => row.state !== "NATIONAL")
-          .map((row: { state: string; risk_score: number; risk_level: string; recommendation: string }) => {
-            const level: RiskItem["level"] =
-              row.risk_level === "RED" || row.risk_level === "GREEN"
-                ? row.risk_level
-                : "AMBER";
-            const decision = level === "RED" ? "SELL" : level === "GREEN" ? "BUY" : "STORE";
-
-            return {
+        let riskRowsForRegion: RiskItem[] = [];
+        const riskRes = results[2];
+        if (riskRes.status === "fulfilled" && riskRes.value.ok) {
+          const riskData = (await riskRes.value.json()) as Array<{
+            state: string;
+            risk_score: number;
+            risk_level: string;
+            recommendation: string;
+          }>;
+          const riskRows: RiskItem[] = riskData
+            .filter((row) => row.state !== "NATIONAL")
+            .map((row) => ({
               state: row.state,
               score: row.risk_score,
-              level,
-              decision,
+              level: row.risk_level as "RED" | "AMBER" | "GREEN",
+              decision: "",
               recommendation: row.recommendation,
-            };
-          });
-        setRisk(riskRows);
+            }));
+          setRisk(riskRows);
+          riskRowsForRegion = riskRows;
+        }
 
         const bySeries = new Map(normalizedSummary.map((item) => [item.series, item]));
         const regionRows: RegionSummaryItem[] = (Object.keys(REGION_GROUPS) as RegionSummaryItem["region"][]).map(
@@ -178,7 +168,7 @@ export default function DashboardPage() {
               const summaryItem = bySeries.get(state);
               demandTotal += summaryItem?.nextDayForecast ?? 0;
               latestTotal += summaryItem?.latestActual ?? 0;
-              const riskItem = riskRows.find((item) => item.state === state);
+              const riskItem = riskRowsForRegion.find((item) => item.state === state);
               riskScores.push(riskItem?.score ?? 55);
             });
 
@@ -212,11 +202,9 @@ export default function DashboardPage() {
         console.log("ANOMALIES:", anomalyJson);
         setAnomalies(normalizeAnomalies(anomalyJson).slice(0, 5));
       }
-
-      setLoading(false);
     } catch (e) {
       console.error(e);
-      setError("CONNECTION ERROR — is the backend running?");
+    } finally {
       setLoading(false);
     }
   }, []);
