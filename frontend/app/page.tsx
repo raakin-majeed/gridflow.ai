@@ -15,7 +15,6 @@ import { formatDateTime, formatNumber } from "./utils/format";
 import {
   normalizeAnomalies,
   normalizeForecastSummary,
-  normalizeResponse,
   type NormalizedAnomalyItem,
 } from "./utils/normalize";
 
@@ -34,6 +33,7 @@ type RiskItem = {
   score: number;
   level: "RED" | "AMBER" | "GREEN";
   decision: string;
+  recommendation: string;
 };
 
 type RegionSummaryItem = {
@@ -44,8 +44,6 @@ type RegionSummaryItem = {
   riskScore: number;
   riskLevel: "RED" | "AMBER" | "GREEN";
 };
-
-const STATES = ["Maharashtra", "Gujarat", "Tamil_Nadu", "Delhi", "UP"] as const;
 
 const REGION_GROUPS: Record<RegionSummaryItem["region"], string[]> = {
   North: ["Delhi", "UP"],
@@ -138,53 +136,34 @@ export default function DashboardPage() {
             })),
         );
 
-        const analyzeResults = await Promise.allSettled(
-          STATES.map((state) => {
-            const analyzeUrl = `${base}/api/v1/analyze`;
-            console.log("Calling:", analyzeUrl);
-            return fetch(analyzeUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                region: state,
-                temp: 30,
-                solar_capacity: 2000,
-                storage_soc: 50,
-                is_festival: false,
-                sim_hour: 14,
-              }),
-            });
-          }),
-        );
+        const riskResponse = await fetch(`${API_BASE}/api/v1/risk-score/all`);
+        if (!riskResponse.ok) {
+          console.error("API failed", riskResponse.status);
+          throw new Error("API error");
+        }
+        const riskData = (await riskResponse.json()) as Array<{
+          state: string;
+          risk_score: number;
+          risk_level: string;
+          recommendation: string;
+        }>;
+        const riskRows: RiskItem[] = riskData
+          .filter((row: { state: string }) => row.state !== "NATIONAL")
+          .map((row: { state: string; risk_score: number; risk_level: string; recommendation: string }) => {
+            const level: RiskItem["level"] =
+              row.risk_level === "RED" || row.risk_level === "GREEN"
+                ? row.risk_level
+                : "AMBER";
+            const decision = level === "RED" ? "SELL" : level === "GREEN" ? "BUY" : "STORE";
 
-        const riskRows: RiskItem[] = await Promise.all(
-          analyzeResults.map(async (result, index) => {
-            const state = STATES[index];
-            if (result.status !== "fulfilled" || !result.value.ok) {
-              if (result.status === "fulfilled") {
-                console.error("API failed", result.value.status);
-              }
-              return { state, score: 55, level: "AMBER", decision: "HOLD" };
-            }
-            const payload = await result.value.json();
-            console.log("ANALYSIS DATA:", payload);
-            const normalizedDecision = normalizeResponse(payload);
-            console.log("ANALYSIS:", normalizedDecision);
-            const level =
-              normalizedDecision.risk === "RED"
-                ? "RED"
-                : normalizedDecision.risk === "GREEN"
-                  ? "GREEN"
-                  : "AMBER";
-            const score = level === "RED" ? 82 : level === "GREEN" ? 35 : 58;
             return {
-              state,
-              score,
+              state: row.state,
+              score: row.risk_score,
               level,
-              decision: normalizedDecision.decision,
+              decision,
+              recommendation: row.recommendation,
             };
-          }),
-        );
+          });
         setRisk(riskRows);
 
         const bySeries = new Map(normalizedSummary.map((item) => [item.series, item]));
